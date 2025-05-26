@@ -1,0 +1,20 @@
+FROM python:3.10-slim
+
+# Instala apenas as dependências necessárias
+RUN pip install \
+    dagster \
+    dagster-github \
+    dagster-postgres \
+    dagster-docker \
+    requests polars pyarrow \
+    pygithub
+
+# Cria o diretório onde o código será montado
+RUN mkdir -p /opt/dagster/app
+
+WORKDIR /opt/dagster/app
+
+# O código será montado via volume, então não usamos COPY aqui
+EXPOSE 4000
+
+CMD ["dagster", "api", "grpc", "-h", "0.0.0.0", "-p", "4000", "-f", "definitions.py"]

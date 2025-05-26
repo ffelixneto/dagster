@@ -1,0 +1,111 @@
+version: '3.8'
+
+services:
+  dagster_posgresql:
+    image: postgres:11
+    environment:
+      POSTGRES_USER: "dag_sql_user"
+      POSTGRES_PASSWORD: "1122tres3"
+      POSTGRES_DB: "dagster_db"
+    networks:
+      - dagster_network
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    deploy:
+      restart_policy:
+        condition: on-failure
+
+  user_code:
+    image: dagster-user-code:dev  # Imagem construída a partir do Dockerfile.user_code
+    secrets:
+      - source: token_github
+        target: TOKEN_GITHUB
+    build:
+      context: .
+      dockerfile: Dockerfile.user_code
+    environment:
+      DAGSTER_POSTGRES_USER: "dag_sql_user"
+      DAGSTER_POSTGRES_PASSWORD: "1122tres3"
+      DAGSTER_POSTGRES_DB: "dagster_db"
+      DAGSTER_CURRENT_IMAGE: "dagster-user-code:dev"
+      TOKEN_GITHUB: /run/secrets/TOKEN_GITHUB
+    volumes:
+      - ./repo:/opt/dagster/app  # Monta a pasta local com o código
+      - ./dagster_outputs:/tmp/dagster_outputs
+      - ./dagster_inputs:/tmp/dagster_inputs
+    networks:
+      - dagster_network
+    deploy:
+      restart_policy:
+        condition: any
+
+  webserver:
+    image: dagster-service:dev  # Imagem construída a partir do Dockerfile.dagster_service
+    build:
+      context: .
+      dockerfile: Dockerfile.dagster_service
+    command: ["dagster-webserver", "-h", "0.0.0.0", "-p", "3000", "-w", "/opt/dagster/dagster_home/workspace.yaml"]
+    environment:
+      DAGSTER_POSTGRES_USER: "dag_sql_user"
+      DAGSTER_POSTGRES_PASSWORD: "1122tres3"
+      DAGSTER_POSTGRES_DB: "dagster_db"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - /tmp/io_manager_storage:/tmp/io_manager_storage
+      - ./config/workspace.yaml:/opt/dagster/dagster_home/workspace.yaml
+      - ./config/dagster.yaml:/opt/dagster/dagster_home/dagster.yaml
+      - ./dagster_outputs:/tmp/dagster_outputs
+      - ./dagster_inputs:/tmp/dagster_inputs
+    networks:
+      - dagster_network
+      - traefik-public
+    deploy:
+      labels:
+        - traefik.enable=true
+        - traefik.docker.network=traefik-public
+        - traefik.http.routers.dagster.rule=Host(`dagster.bzrsites.com.br`)
+        - traefik.http.routers.dagster.entrypoints=websecure
+        - traefik.http.routers.dagster.tls=true
+        - traefik.http.routers.dagster.tls.certresolver=myresolver
+        - traefik.http.services.dagster.loadbalancer.server.port=3000
+
+        # Configuração da autenticação básica
+        - "traefik.http.routers.dagster.middlewares=dagster-auth"
+        - "traefik.http.middlewares.dagster-auth.basicauth.users=bzruser:$$apr1$$OnFJ6caG$$1oe1lBKK3YAZ03vHsQcm3."
+        - "traefik.http.middlewares.dagster-auth.basicauth.realm=Autenticacao Requerida 🔐"
+        - "traefik.http.middlewares.dagster-auth.basicauth.removeheader=true"
+      placement:
+        constraints: [node.role == manager]
+
+  daemon:
+    image: dagster-service:dev  # Mesma imagem do webserver
+    command: ["dagster-daemon", "run"]
+    environment:
+      DAGSTER_POSTGRES_USER: "dag_sql_user"
+      DAGSTER_POSTGRES_PASSWORD: "1122tres3"
+      DAGSTER_POSTGRES_DB: "dagster_db"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - /tmp/io_manager_storage:/tmp/io_manager_storage
+      - ./config/workspace.yaml:/opt/dagster/dagster_home/workspace.yaml
+      - ./config/dagster.yaml:/opt/dagster/dagster_home/dagster.yaml
+    networks:
+      - dagster_network
+    deploy:
+      restart_policy:
+        condition: on-failure
+      placement:
+        constraints: [node.role == manager]
+
+networks:
+  traefik-public:
+    external: true
+  dagster_network:
+    external: true
+
+secrets:
+  token_github:
+    external: true
+
+volumes:
+  postgres_data:
